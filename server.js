@@ -118,6 +118,43 @@ app.post('/auth/login', async (req, res) => {
     }
 });
 
+// CHANGE PASSWORD (Authenticated)
+app.patch('/auth/change-password', auth, async (req, res) => {
+    try {
+        const oldPassword = parseNonEmptyString(req.body.oldPassword);
+        const newPassword = parseNonEmptyString(req.body.newPassword);
+
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: 'oldPassword and newPassword are required.' });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+        }
+
+        if (oldPassword === newPassword) {
+            return res.status(400).json({ error: 'New password must be different from old password.' });
+        }
+
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const isOldPasswordValid = await bcrypt.compare(oldPassword, user.password);
+        if (!isOldPasswordValid) {
+            return res.status(400).json({ error: 'Old password is incorrect.' });
+        }
+
+        user.password = await bcrypt.hash(newPassword, 12);
+        await user.save();
+
+        res.json({ message: 'Password changed successfully.' });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not change password.' });
+    }
+});
+
 // --- PROTECTED BOOK ROUTES ---
 
 // 1. UPLOAD (Authenticated)
@@ -222,7 +259,66 @@ app.post('/books/:id/vocab', auth, async (req, res) => {
     }
 });
 
-// 5. ADD NOTE
+// 5. UPDATE VOCAB
+app.patch('/books/:id/vocab/:vocabId', auth, async (req, res) => {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ error: 'Invalid book ID.' });
+        }
+        if (!mongoose.Types.ObjectId.isValid(req.params.vocabId)) {
+            return res.status(400).json({ error: 'Invalid vocab ID.' });
+        }
+
+        const word = parseNonEmptyString(req.body.word);
+        const definition = parseNonEmptyString(req.body.definition);
+        if (!word && !definition) {
+            return res.status(400).json({ error: 'At least one of word or definition is required.' });
+        }
+
+        const book = await Book.findOne({ _id: req.params.id, owner: req.user.id });
+        if (!book) return res.status(404).json({ error: 'Book not found.' });
+
+        const vocab = book.vocabulary.id(req.params.vocabId);
+        if (!vocab) {
+            return res.status(404).json({ error: 'Vocab not found.' });
+        }
+
+        if (word) vocab.word = word;
+        if (definition) vocab.definition = definition;
+        await book.save();
+        res.json(vocab);
+    } catch (err) {
+        res.status(500).json({ error: 'Could not update vocab.' });
+    }
+});
+
+// 6. DELETE VOCAB
+app.delete('/books/:id/vocab/:vocabId', auth, async (req, res) => {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ error: 'Invalid book ID.' });
+        }
+        if (!mongoose.Types.ObjectId.isValid(req.params.vocabId)) {
+            return res.status(400).json({ error: 'Invalid vocab ID.' });
+        }
+
+        const book = await Book.findOne({ _id: req.params.id, owner: req.user.id });
+        if (!book) return res.status(404).json({ error: 'Book not found.' });
+
+        const vocab = book.vocabulary.id(req.params.vocabId);
+        if (!vocab) {
+            return res.status(404).json({ error: 'Vocab not found.' });
+        }
+
+        vocab.deleteOne();
+        await book.save();
+        res.json({ message: 'Vocab deleted.' });
+    } catch (err) {
+        res.status(500).json({ error: 'Could not delete vocab.' });
+    }
+});
+
+// 7. ADD NOTE
 app.post('/books/:id/notes', auth, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -249,7 +345,7 @@ app.post('/books/:id/notes', auth, async (req, res) => {
     }
 });
 
-// 6. GET NOTES
+// 8. GET NOTES
 app.get('/books/:id/notes', auth, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -265,7 +361,7 @@ app.get('/books/:id/notes', auth, async (req, res) => {
     }
 });
 
-// 7. UPDATE NOTE
+// 9. UPDATE NOTE
 app.patch('/books/:id/notes/:noteId', auth, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -298,7 +394,7 @@ app.patch('/books/:id/notes/:noteId', auth, async (req, res) => {
     }
 });
 
-// 8. DELETE NOTE
+// 10. DELETE NOTE
 app.delete('/books/:id/notes/:noteId', auth, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -324,7 +420,7 @@ app.delete('/books/:id/notes/:noteId', auth, async (req, res) => {
     }
 });
 
-// 9. DELETE BOOK
+// 11. DELETE BOOK
 app.delete('/books/:id', auth, async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {

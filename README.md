@@ -4,7 +4,7 @@ Backend API for uploading PDF ebooks, tracking reading progress, and saving voca
 
 ## Features
 
-- JWT-based authentication (`signup` / `login`)
+- JWT-based authentication (`signup` / `login` / `change-password`)
 - Auth-protected ebook APIs
 - PDF upload to Cloudinary (`raw` resource)
 - PDF page extraction (`totalPages`) using `pdf-parse-fork`
@@ -154,7 +154,36 @@ Success response (`200`):
 }
 ```
 
-### 3. Upload Book (PDF)
+### 3. Change Password
+
+- **PATCH** `/auth/change-password`
+- **Protected**
+
+Request body:
+
+```json
+{
+  "oldPassword": "StrongPass123!",
+  "newPassword": "StrongPass456!"
+}
+```
+
+Validation:
+
+- `oldPassword` and `newPassword` are required
+- `newPassword` min length is 8
+- `newPassword` must be different from `oldPassword`
+- old password must match current account password
+
+Success response (`200`):
+
+```json
+{
+  "message": "Password changed successfully."
+}
+```
+
+### 4. Upload Book (PDF)
 
 - **POST** `/upload-book`
 - **Protected**
@@ -194,7 +223,7 @@ Upload errors:
 - non-PDF file -> `400` `Only PDF files are allowed.`
 - file size > 15 MB -> `400` `PDF file must be 15 MB or smaller.`
 
-### 4. Get My Books
+### 5. Get My Books
 
 - **GET** `/books`
 - **Protected**
@@ -203,7 +232,7 @@ Returns current user books sorted by newest first.
 
 Success response (`200`): array of books.
 
-### 5. Update Reading Progress
+### 6. Update Reading Progress
 
 - **PATCH** `/books/:id/progress`
 - **Protected**
@@ -231,7 +260,7 @@ Success response (`200`):
 }
 ```
 
-### 6. Add Vocabulary
+### 7. Add Vocabulary
 
 - **POST** `/books/:id/vocab`
 - **Protected**
@@ -253,26 +282,45 @@ Validation:
 
 Success response (`200`): updated `vocabulary` array.
 
-### 7. Delete Book
+### 8. Edit Vocabulary
 
-- **DELETE** `/books/:id`
+- **PATCH** `/books/:id/vocab/:vocabId`
 - **Protected**
 
-Behavior:
+Request body (at least one field required):
 
-- verifies ownership
-- deletes file from Cloudinary
-- deletes DB record
+```json
+{
+  "word": "pervasive",
+  "definition": "spreading widely throughout an area or group"
+}
+```
+
+Validation:
+
+- valid `bookId` and `vocabId`
+- at least one of `word` or `definition` provided and non-empty
+
+Success response (`200`): updated vocab object.
+
+### 9. Delete Vocabulary
+
+- **DELETE** `/books/:id/vocab/:vocabId`
+- **Protected**
+
+Validation:
+
+- valid `bookId` and `vocabId`
 
 Success response (`200`):
 
 ```json
 {
-  "message": "Book deleted."
+  "message": "Vocab deleted."
 }
 ```
 
-### 8. Add Note
+### 10. Add Note
 
 - **POST** `/books/:id/notes`
 - **Protected**
@@ -303,14 +351,14 @@ Success response (`201`) example:
 }
 ```
 
-### 9. Get Notes
+### 11. Get Notes
 
 - **GET** `/books/:id/notes`
 - **Protected**
 
 Success response (`200`): array of note objects.
 
-### 10. Update Note
+### 12. Update Note
 
 - **PATCH** `/books/:id/notes/:noteId`
 - **Protected**
@@ -331,7 +379,7 @@ Validation:
 
 Success response (`200`): updated note object.
 
-### 11. Delete Note
+### 13. Delete Note
 
 - **DELETE** `/books/:id/notes/:noteId`
 - **Protected**
@@ -345,6 +393,25 @@ Success response (`200`):
 ```json
 {
   "message": "Note deleted."
+}
+```
+
+### 14. Delete Book
+
+- **DELETE** `/books/:id`
+- **Protected**
+
+Behavior:
+
+- verifies ownership
+- deletes file from Cloudinary
+- deletes DB record
+
+Success response (`200`):
+
+```json
+{
+  "message": "Book deleted."
 }
 ```
 
@@ -437,6 +504,15 @@ curl -X POST http://localhost:3000/auth/login \
   -d '{"email":"user@example.com","password":"StrongPass123!"}'
 ```
 
+Change password:
+
+```bash
+curl -X PATCH http://localhost:3000/auth/change-password \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"oldPassword":"StrongPass123!","newPassword":"StrongPass456!"}'
+```
+
 Upload PDF:
 
 ```bash
@@ -444,6 +520,22 @@ curl -X POST http://localhost:3000/upload-book \
   -H "Authorization: Bearer <token>" \
   -F "pdf=@./uploads/bonified_certificate.pdf;type=application/pdf" \
   -F "title=My Book"
+```
+
+Edit vocabulary:
+
+```bash
+curl -X PATCH http://localhost:3000/books/<bookId>/vocab/<vocabId> \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"word":"pervasive","definition":"spreading widely"}'
+```
+
+Delete vocabulary:
+
+```bash
+curl -X DELETE http://localhost:3000/books/<bookId>/vocab/<vocabId> \
+  -H "Authorization: Bearer <token>"
 ```
 
 Add note:
