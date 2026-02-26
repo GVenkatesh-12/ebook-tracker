@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 EMAIL="${EMAIL:-smoke.$(date +%s)@example.com}"
 PASSWORD="${PASSWORD:-TestPass123!}"
-PDF_PATH="${PDF_PATH:-./uploads/bonified_certificate.pdf}"
+PDF_PATH="${PDF_PATH:-./uploads/file_name.pdf}"
 
 if [[ ! -f "${PDF_PATH}" ]]; then
   echo "Error: PDF file not found at ${PDF_PATH}"
