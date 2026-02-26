@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import multer from 'multer';
+import cors from 'cors';
 import { promises as fs } from 'fs';
 import pdf from 'pdf-parse-fork';
 import { v2 as cloudinary } from 'cloudinary';
@@ -13,6 +14,13 @@ import { User } from './models/User.js';
 import { auth } from './middleware/auth.js';
 
 const app = express();
+const corsOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const corsOptions = corsOrigins.length > 0 ? { origin: corsOrigins } : {};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 const PORT = process.env.PORT || 3000;
 const MAX_PDF_SIZE_BYTES = 15 * 1024 * 1024;

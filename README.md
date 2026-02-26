@@ -60,9 +60,11 @@ JWT_SECRET=your_strong_jwt_secret
 CLOUD_NAME=your_cloudinary_cloud_name
 CLOUD_API_KEY=your_cloudinary_api_key
 CLOUD_API_SECRET=your_cloudinary_api_secret
+CORS_ORIGIN=http://localhost:5173
 ```
 
 The server validates required env vars on startup and exits if any are missing.
+`CORS_ORIGIN` is optional. Set one or more comma-separated origins to restrict cross-origin access.
 
 ## Installation
 
