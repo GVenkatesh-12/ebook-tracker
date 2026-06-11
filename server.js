@@ -22,6 +22,7 @@ const corsOptions = corsOrigins.length > 0 ? { origin: corsOrigins } : {};
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const PORT = process.env.PORT || 3000;
 const MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024;
 const REQUIRED_ENV_VARS = [
@@ -448,7 +449,7 @@ app.delete('/books/:id', auth, async (req, res) => {
 
 app.use((err, req, res, next) => {
     if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'PDF file must be 15 MB or smaller.' });
+        return res.status(400).json({ error: `PDF file must be ${MAX_PDF_SIZE_BYTES / 1024 / 1024}MB or smaller.` });
     }
 
     if (err?.message === 'Only PDF files are allowed.') {
