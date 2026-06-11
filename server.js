@@ -23,7 +23,7 @@ const corsOptions = corsOrigins.length > 0 ? { origin: corsOrigins } : {};
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 const PORT = process.env.PORT || 3000;
-const MAX_PDF_SIZE_BYTES = 15 * 1024 * 1024;
+const MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024;
 const REQUIRED_ENV_VARS = [
     'MONGO_URI',
     'CLOUD_NAME',

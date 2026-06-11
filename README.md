@@ -14,7 +14,7 @@ Backend API for uploading PDF ebooks, tracking reading progress, and saving voca
 - Book ownership enforcement (users can access only their own books)
 - Upload validation:
   - PDF-only uploads
-  - Maximum file size: `15 MB`
+  - Maximum file size: `50 MB`
 
 ## Tech Stack
 
