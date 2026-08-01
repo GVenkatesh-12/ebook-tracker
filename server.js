@@ -30,7 +30,8 @@ const REQUIRED_ENV_VARS = [
     'CLOUD_NAME',
     'CLOUD_API_KEY',
     'CLOUD_API_SECRET',
-    'JWT_SECRET'
+    'JWT_SECRET',
+    'ELEVENLABS_API_KEY'
 ];
 
 function ensureRequiredEnvVars() {
@@ -444,6 +445,76 @@ app.delete('/books/:id', auth, async (req, res) => {
         res.json({ message: 'Book deleted.' });
     } catch (err) {
         res.status(500).json({ error: 'Delete failed.' });
+    }
+});
+
+// 12. TEXT-TO-SPEECH (ElevenLabs proxy)
+const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
+const ELEVENLABS_MAX_CHARS = 5000;
+
+function parseVoiceSettings(value) {
+    if (!value) return null;
+    try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed;
+        }
+    } catch {
+        // Ignore malformed settings; fall back to defaults.
+    }
+    return null;
+}
+
+app.post('/tts/synthesize', auth, async (req, res) => {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+        return res.status(503).json({ error: 'TTS is not configured. Set ELEVENLABS_API_KEY on the server.' });
+    }
+
+    const text = parseNonEmptyString(req.body?.text);
+    if (!text) {
+        return res.status(400).json({ error: 'Text is required.' });
+    }
+    if (text.length > ELEVENLABS_MAX_CHARS) {
+        return res.status(400).json({ error: `Text must be ${ELEVENLABS_MAX_CHARS} characters or fewer.` });
+    }
+
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
+    const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3';
+    const voiceSettings = parseVoiceSettings(process.env.ELEVENLABS_VOICE_SETTINGS);
+
+    const body = { text, model_id: modelId };
+    if (voiceSettings) body.voice_settings = voiceSettings;
+
+    try {
+        const upstream = await fetch(
+            `${ELEVENLABS_API_URL}/${encodeURIComponent(voiceId)}/with-timestamps?output_format=mp3_44100_128`,
+            {
+                method: 'POST',
+                headers: {
+                    'xi-api-key': apiKey,
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                },
+                body: JSON.stringify(body),
+            },
+        );
+
+        if (!upstream.ok) {
+            const detail = await upstream.text().catch(() => '');
+            return res.status(upstream.status).json({
+                error: `ElevenLabs error (${upstream.status}): ${detail.slice(0, 300) || upstream.statusText}`,
+            });
+        }
+
+        const data = await upstream.json();
+        res.json({
+            audioBase64: data.audio_base64,
+            alignment: data.alignment || null,
+        });
+    } catch (err) {
+        console.error('TTS upstream error:', err.message);
+        res.status(502).json({ error: 'TTS service request failed.' });
     }
 });
 

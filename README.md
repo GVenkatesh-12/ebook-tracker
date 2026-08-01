@@ -61,6 +61,11 @@ CLOUD_NAME=your_cloudinary_cloud_name
 CLOUD_API_KEY=your_cloudinary_api_key
 CLOUD_API_SECRET=your_cloudinary_api_secret
 CORS_ORIGIN=http://localhost:5173
+# TTS (ElevenLabs) — ELEVENLABS_API_KEY is required; voice/model are optional with these defaults
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+ELEVENLABS_VOICE_ID=pNInz6obpgDQGcFmaJgB
+ELEVENLABS_MODEL_ID=eleven_v3
+ELEVENLABS_VOICE_SETTINGS={"stability":0.6,"similarity_boost":0.75}
 ```
 
 The server validates required env vars on startup and exits if any are missing.
@@ -416,6 +421,44 @@ Success response (`200`):
   "message": "Book deleted."
 }
 ```
+
+### 15. Synthesize Speech (TTS)
+
+- **POST** `/tts/synthesize`
+- **Protected**
+
+Proxies text to ElevenLabs (`/v1/text-to-speech/{voice}/with-timestamps`) and returns the audio plus character-level alignment timings for word-by-word highlighting.
+
+Request body:
+
+```json
+{
+  "text": "The quick brown fox jumps over the lazy dog."
+}
+```
+
+Validation:
+
+- `text` required, max `5000` characters
+
+Success response (`200`):
+
+```json
+{
+  "audioBase64": "<base64-encoded mp3>",
+  "alignment": {
+    "characters": ["T", "h", "e", " "],
+    "character_start_times_seconds": [0.01, 0.05, 0.08, 0.11],
+    "character_end_times_seconds": [0.04, 0.07, 0.11, 0.14]
+  }
+}
+```
+
+Errors:
+
+- missing `ELEVENLABS_API_KEY` -> `503` `TTS is not configured...`
+- text > 5000 chars -> `400`
+- upstream ElevenLabs error -> forwarded status + message
 
 ---
 
