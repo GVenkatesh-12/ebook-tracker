@@ -479,7 +479,7 @@ app.post('/tts/synthesize', auth, async (req, res) => {
         return res.status(400).json({ error: `Text must be ${ELEVENLABS_MAX_CHARS} characters or fewer.` });
     }
 
-    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'nPczCjzI2devNBz1zQrb';
     const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3';
     const voiceSettings = parseVoiceSettings(process.env.ELEVENLABS_VOICE_SETTINGS);
 

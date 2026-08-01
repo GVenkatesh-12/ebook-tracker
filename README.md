@@ -63,7 +63,7 @@ CLOUD_API_SECRET=your_cloudinary_api_secret
 CORS_ORIGIN=http://localhost:5173
 # TTS (ElevenLabs) — ELEVENLABS_API_KEY is required; voice/model are optional with these defaults
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
-ELEVENLABS_VOICE_ID=pNInz6obpgDQGcFmaJgB
+ELEVENLABS_VOICE_ID=nPczCjzI2devNBz1zQrb
 ELEVENLABS_MODEL_ID=eleven_v3
 ELEVENLABS_VOICE_SETTINGS={"stability":0.6,"similarity_boost":0.75}
 ```
