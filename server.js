@@ -502,7 +502,8 @@ app.post('/tts/synthesize', auth, async (req, res) => {
 
         if (!upstream.ok) {
             const detail = await upstream.text().catch(() => '');
-            return res.status(upstream.status).json({
+            const status = upstream.status === 401 ? 502 : upstream.status;
+            return res.status(status).json({
                 error: `ElevenLabs error (${upstream.status}): ${detail.slice(0, 300) || upstream.statusText}`,
             });
         }
