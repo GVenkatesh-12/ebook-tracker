@@ -483,7 +483,10 @@ app.post('/tts/synthesize', auth, async (req, res) => {
     const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3';
     const voiceSettings = parseVoiceSettings(process.env.ELEVENLABS_VOICE_SETTINGS);
 
-    const body = { text, model_id: modelId };
+    const rawSpeed = Number(process.env.ELEVENLABS_SPEED || 0.9);
+    const speed = Number.isFinite(rawSpeed) ? Math.min(1.2, Math.max(0.7, rawSpeed)) : 0.9;
+
+    const body = { text, model_id: modelId, speed };
     if (voiceSettings) body.voice_settings = voiceSettings;
 
     try {
@@ -502,7 +505,10 @@ app.post('/tts/synthesize', auth, async (req, res) => {
 
         if (!upstream.ok) {
             const detail = await upstream.text().catch(() => '');
-            const status = upstream.status === 401 ? 502 : upstream.status;
+            console.error('ElevenLabs upstream error:', upstream.status, detail.slice(0, 300));
+            let status = upstream.status;
+            if (upstream.status === 401) status = 502;
+            if (upstream.status === 429) status = 503;
             return res.status(status).json({
                 error: `ElevenLabs error (${upstream.status}): ${detail.slice(0, 300) || upstream.statusText}`,
             });

@@ -65,6 +65,7 @@ CORS_ORIGIN=http://localhost:5173
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_VOICE_ID=nPczCjzI2devNBz1zQrb
 ELEVENLABS_MODEL_ID=eleven_v3
+ELEVENLABS_SPEED=0.9
 ELEVENLABS_VOICE_SETTINGS={"stability":0.6,"similarity_boost":0.75}
 ```
 
