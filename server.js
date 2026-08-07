@@ -539,6 +539,11 @@ app.post('/tts/stream', auth, async (req, res) => {
                 if (event.event_type === 'step.delta') {
                     const delta = event.delta;
                     if (delta && delta.type === 'audio' && delta.data) {
+                        if (!wroteAudio) {
+                            console.log(
+                                `[tts] first audio delta: mime=${delta.mime_type || 'audio/l16'} rate=${delta.sample_rate || 24000} channels=${delta.channels || 1} bytes=${Math.floor(delta.data.length * 3 / 4)}`,
+                            );
+                        }
                         wroteAudio = true;
                         res.write(
                             JSON.stringify({
@@ -553,6 +558,9 @@ app.post('/tts/stream', auth, async (req, res) => {
                 }
             }
 
+            if (!wroteAudio) {
+                console.error('[tts] stream completed without any audio deltas (model may have returned text tokens)');
+            }
             res.write(JSON.stringify({ type: 'done' }) + '\n');
             res.end();
             return;
