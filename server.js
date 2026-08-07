@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import multer from 'multer';
 import cors from 'cors';
+import { GoogleGenAI } from '@google/genai';
 import { promises as fs } from 'fs';
 import pdf from 'pdf-parse-fork';
 import { v2 as cloudinary } from 'cloudinary';
@@ -31,7 +32,7 @@ const REQUIRED_ENV_VARS = [
     'CLOUD_API_KEY',
     'CLOUD_API_SECRET',
     'JWT_SECRET',
-    'ELEVENLABS_API_KEY'
+    'GEMINI_API_KEY'
 ];
 
 function ensureRequiredEnvVars() {
@@ -448,81 +449,127 @@ app.delete('/books/:id', auth, async (req, res) => {
     }
 });
 
-// 12. TEXT-TO-SPEECH (ElevenLabs proxy)
-const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
-const ELEVENLABS_MAX_CHARS = 5000;
+// 12. TEXT-TO-SPEECH (Gemini streaming proxy)
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Gacrux';
+const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com';
+const GEMINI_TTS_MAX_CHARS = 5000;
+const GEMINI_TTS_MAX_RETRIES = 2;
 
-function parseVoiceSettings(value) {
-    if (!value) return null;
-    try {
-        const parsed = JSON.parse(value);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            return parsed;
+let genaiClient = null;
+function getGenaiClient() {
+    if (!genaiClient) {
+        const options = { apiKey: process.env.GEMINI_API_KEY };
+        if (GEMINI_API_URL !== 'https://generativelanguage.googleapis.com') {
+            // Test/staging override; keeps the smoke test off the live API.
+            options.httpOptions = { baseUrl: GEMINI_API_URL };
         }
-    } catch {
-        // Ignore malformed settings; fall back to defaults.
+        genaiClient = new GoogleGenAI(options);
     }
-    return null;
+    return genaiClient;
 }
 
-app.post('/tts/synthesize', auth, async (req, res) => {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
+function buildTtsPrompt(text) {
+    // The preamble anchors the model into speech-synthesis mode and labels
+    // where the transcript begins (recommended in the Gemini TTS prompting
+    // guide to avoid classifier rejections or instructions being read aloud).
+    // Inline audio tags in the text (e.g. [calmly], [whispers]) pass through
+    // untouched and are interpreted by the model.
+    return `Read the following text aloud with a natural, expressive narration. Speak only the text itself, exactly as written; do not add commentary.\n\nTEXT:\n${text}`;
+}
+
+function isRetryableTtsError(err) {
+    const status = err?.status ?? err?.code;
+    if (typeof status === 'number') return status === 429 || status >= 500;
+    return /INTERNAL|UNAVAILABLE|PROHIBITED_CONTENT/i.test(String(err?.message ?? ''));
+}
+
+app.post('/tts/stream', auth, async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-        return res.status(503).json({ error: 'TTS is not configured. Set ELEVENLABS_API_KEY on the server.' });
+        return res.status(503).json({ error: 'TTS is not configured. Set GEMINI_API_KEY on the server.' });
     }
 
     const text = parseNonEmptyString(req.body?.text);
     if (!text) {
         return res.status(400).json({ error: 'Text is required.' });
     }
-    if (text.length > ELEVENLABS_MAX_CHARS) {
-        return res.status(400).json({ error: `Text must be ${ELEVENLABS_MAX_CHARS} characters or fewer.` });
+    if (text.length > GEMINI_TTS_MAX_CHARS) {
+        return res.status(400).json({ error: `Text must be ${GEMINI_TTS_MAX_CHARS} characters or fewer.` });
     }
 
-    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'nPczCjzI2devNBz1zQrb';
-    const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_v3';
-    const voiceSettings = parseVoiceSettings(process.env.ELEVENLABS_VOICE_SETTINGS);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
 
-    const rawSpeed = Number(process.env.ELEVENLABS_SPEED || 0.9);
-    const speed = Number.isFinite(rawSpeed) ? Math.min(1.2, Math.max(0.7, rawSpeed)) : 0.9;
-
-    const body = { text, model_id: modelId, speed };
-    if (voiceSettings) body.voice_settings = voiceSettings;
-
-    try {
-        const upstream = await fetch(
-            `${ELEVENLABS_API_URL}/${encodeURIComponent(voiceId)}/with-timestamps?output_format=mp3_44100_128`,
-            {
-                method: 'POST',
-                headers: {
-                    'xi-api-key': apiKey,
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json',
-                },
-                body: JSON.stringify(body),
-            },
-        );
-
-        if (!upstream.ok) {
-            const detail = await upstream.text().catch(() => '');
-            console.error('ElevenLabs upstream error:', upstream.status, detail.slice(0, 300));
-            let status = upstream.status;
-            if (upstream.status === 401) status = 502;
-            if (upstream.status === 429) status = 503;
-            return res.status(status).json({
-                error: `ElevenLabs error (${upstream.status}): ${detail.slice(0, 300) || upstream.statusText}`,
-            });
+    const abortController = new AbortController();
+    let clientGone = false;
+    // `req` 'close' fires once the request body is consumed; only `res` 'close'
+    // with an unfinished response indicates the client actually disconnected.
+    res.on('close', () => {
+        if (!res.writableEnded) {
+            clientGone = true;
+            abortController.abort();
         }
+    });
 
-        const data = await upstream.json();
-        res.json({
-            audioBase64: data.audio_base64,
-            alignment: data.alignment || null,
-        });
-    } catch (err) {
-        console.error('TTS upstream error:', err.message);
-        res.status(502).json({ error: 'TTS service request failed.' });
+    let lastError = null;
+    let wroteAudio = false;
+
+    for (let attempt = 0; attempt <= GEMINI_TTS_MAX_RETRIES; attempt++) {
+        if (clientGone) return;
+        try {
+            const stream = await getGenaiClient().interactions.create(
+                {
+                    model: GEMINI_TTS_MODEL,
+                    input: buildTtsPrompt(text),
+                    response_format: { type: 'audio' },
+                    generation_config: { speech_config: [{ voice: GEMINI_TTS_VOICE }] },
+                    stream: true,
+                    store: false,
+                },
+                { fetchOptions: { signal: abortController.signal } },
+            );
+
+            for await (const event of stream) {
+                if (clientGone) return;
+                if (event.event_type === 'error') {
+                    throw new Error(event.error?.message || 'Gemini TTS stream error.');
+                }
+                if (event.event_type === 'step.delta') {
+                    const delta = event.delta;
+                    if (delta && delta.type === 'audio' && delta.data) {
+                        wroteAudio = true;
+                        res.write(
+                            JSON.stringify({
+                                type: 'audio',
+                                data: delta.data,
+                                mimeType: delta.mime_type || 'audio/l16',
+                                sampleRate: delta.sample_rate || 24000,
+                                channels: delta.channels || 1,
+                            }) + '\n',
+                        );
+                    }
+                }
+            }
+
+            res.write(JSON.stringify({ type: 'done' }) + '\n');
+            res.end();
+            return;
+        } catch (err) {
+            lastError = err;
+            console.error('Gemini TTS error (attempt', attempt + 1, 'of', GEMINI_TTS_MAX_RETRIES + 1, '):', err.message);
+            if (wroteAudio || !isRetryableTtsError(err) || attempt >= GEMINI_TTS_MAX_RETRIES) break;
+            await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+        }
     }
+
+    if (clientGone) return;
+    if (!wroteAudio) {
+        return res.status(502).json({ error: `Gemini TTS error: ${lastError?.message || 'Unknown error'}` });
+    }
+    res.write(JSON.stringify({ type: 'error', message: `Gemini TTS error: ${lastError?.message || 'Unknown error'}` }) + '\n');
+    res.end();
 });
 
 app.use((err, req, res, next) => {
