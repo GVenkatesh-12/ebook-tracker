@@ -475,7 +475,7 @@ function buildTtsPrompt(text) {
     // guide to avoid classifier rejections or instructions being read aloud).
     // Inline audio tags in the text (e.g. [calmly], [whispers]) pass through
     // untouched and are interpreted by the model.
-    return `Read the following text aloud with a natural, expressive narration. Speak only the text itself, exactly as written; do not add commentary.\n\nTEXT:\n${text}`;
+    return `Read the following text aloud in a calm, mature male voice. Speak only the text itself, exactly as written; do not add commentary.\n\nTEXT:\n${text}`;
 }
 
 function isRetryableTtsError(err) {
