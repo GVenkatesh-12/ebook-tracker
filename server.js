@@ -2,7 +2,6 @@ import express from 'express';
 import mongoose from 'mongoose';
 import multer from 'multer';
 import cors from 'cors';
-import { GoogleGenAI } from '@google/genai';
 import { promises as fs } from 'fs';
 import pdf from 'pdf-parse-fork';
 import { v2 as cloudinary } from 'cloudinary';
@@ -32,7 +31,7 @@ const REQUIRED_ENV_VARS = [
     'CLOUD_API_KEY',
     'CLOUD_API_SECRET',
     'JWT_SECRET',
-    'GEMINI_API_KEY'
+    'OPENROUTER_API_KEY'
 ];
 
 function ensureRequiredEnvVars() {
@@ -449,53 +448,33 @@ app.delete('/books/:id', auth, async (req, res) => {
     }
 });
 
-// 12. TEXT-TO-SPEECH (Gemini streaming proxy)
-const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
-const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Gacrux';
-const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com';
-const GEMINI_TTS_MAX_CHARS = 5000;
-const GEMINI_TTS_MAX_RETRIES = 2;
-
-let genaiClient = null;
-function getGenaiClient() {
-    if (!genaiClient) {
-        const options = { apiKey: process.env.GEMINI_API_KEY };
-        if (GEMINI_API_URL !== 'https://generativelanguage.googleapis.com') {
-            // Test/staging override; keeps the smoke test off the live API.
-            options.httpOptions = { baseUrl: GEMINI_API_URL };
-        }
-        genaiClient = new GoogleGenAI(options);
-    }
-    return genaiClient;
-}
-
-function buildTtsPrompt(text) {
-    // The preamble anchors the model into speech-synthesis mode and labels
-    // where the transcript begins (recommended in the Gemini TTS prompting
-    // guide to avoid classifier rejections or instructions being read aloud).
-    // Inline audio tags in the text (e.g. [calmly], [whispers]) pass through
-    // untouched and are interpreted by the model.
-    return `Read the following text aloud in a calm, mature male voice. Speak only the text itself, exactly as written; do not add commentary.\n\nTEXT:\n${text}`;
-}
+// 12. TEXT-TO-SPEECH (OpenRouter / Fish Audio streaming proxy)
+const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1';
+const OPENROUTER_TTS_MODEL = process.env.OPENROUTER_TTS_MODEL || 'fish-audio/s2.1-pro-free:free';
+const OPENROUTER_TTS_VOICE = process.env.OPENROUTER_TTS_VOICE || 'alloy';
+const OPENROUTER_TTS_SAMPLE_RATE = Number(process.env.OPENROUTER_TTS_SAMPLE_RATE) || 24000;
+const OPENROUTER_TTS_MAX_CHARS = 5000;
+const OPENROUTER_TTS_MAX_RETRIES = 2;
+const TTS_RELAY_CHUNK_BYTES = 48 * 1024;
 
 function isRetryableTtsError(err) {
     const status = err?.status ?? err?.code;
     if (typeof status === 'number') return status === 429 || status >= 500;
-    return /INTERNAL|UNAVAILABLE|PROHIBITED_CONTENT/i.test(String(err?.message ?? ''));
+    return /INTERNAL|UNAVAILABLE|ECONNRESET|fetch failed/i.test(String(err?.message ?? ''));
 }
 
 app.post('/tts/stream', auth, async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-        return res.status(503).json({ error: 'TTS is not configured. Set GEMINI_API_KEY on the server.' });
+        return res.status(503).json({ error: 'TTS is not configured. Set OPENROUTER_API_KEY on the server.' });
     }
 
     const text = parseNonEmptyString(req.body?.text);
     if (!text) {
         return res.status(400).json({ error: 'Text is required.' });
     }
-    if (text.length > GEMINI_TTS_MAX_CHARS) {
-        return res.status(400).json({ error: `Text must be ${GEMINI_TTS_MAX_CHARS} characters or fewer.` });
+    if (text.length > OPENROUTER_TTS_MAX_CHARS) {
+        return res.status(400).json({ error: `Text must be ${OPENROUTER_TTS_MAX_CHARS} characters or fewer.` });
     }
 
     res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -516,67 +495,104 @@ app.post('/tts/stream', auth, async (req, res) => {
     let lastError = null;
     let wroteAudio = false;
 
-    for (let attempt = 0; attempt <= GEMINI_TTS_MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= OPENROUTER_TTS_MAX_RETRIES; attempt++) {
         if (clientGone) return;
         try {
-            const stream = await getGenaiClient().interactions.create(
-                {
-                    model: GEMINI_TTS_MODEL,
-                    input: buildTtsPrompt(text),
-                    response_format: { type: 'audio' },
-                    generation_config: { speech_config: [{ voice: GEMINI_TTS_VOICE }] },
-                    stream: true,
-                    store: false,
+            const upstream = await fetch(`${OPENROUTER_API_URL}/audio/speech`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
                 },
-                { fetchOptions: { signal: abortController.signal } },
-            );
+                body: JSON.stringify({
+                    model: OPENROUTER_TTS_MODEL,
+                    input: text,
+                    voice: OPENROUTER_TTS_VOICE,
+                    response_format: 'pcm',
+                }),
+                signal: abortController.signal,
+            });
 
-            for await (const event of stream) {
-                if (clientGone) return;
-                if (event.event_type === 'error') {
-                    throw new Error(event.error?.message || 'Gemini TTS stream error.');
+            if (!upstream.ok) {
+                const detail = await upstream.text().catch(() => '');
+                const err = new Error(`OpenRouter error (${upstream.status}): ${detail.slice(0, 300) || upstream.statusText}`);
+                err.status = upstream.status;
+                throw err;
+            }
+            if (!upstream.body) {
+                throw new Error('OpenRouter returned no response body.');
+            }
+
+            const reader = upstream.body.getReader();
+            let pendingBytes = new Uint8Array(0);
+            let totalBytes = 0;
+
+            const relay = (bytes) => {
+                if (!wroteAudio) {
+                    wroteAudio = true;
+                    console.log(
+                        `[tts] OpenRouter model=${OPENROUTER_TTS_MODEL} voice=${OPENROUTER_TTS_VOICE} pcm rate=${OPENROUTER_TTS_SAMPLE_RATE} streaming`,
+                    );
                 }
-                if (event.event_type === 'step.delta') {
-                    const delta = event.delta;
-                    if (delta && delta.type === 'audio' && delta.data) {
-                        if (!wroteAudio) {
-                            console.log(
-                                `[tts] first audio delta: mime=${delta.mime_type || 'audio/l16'} rate=${delta.sample_rate || 24000} channels=${delta.channels || 1} bytes=${Math.floor(delta.data.length * 3 / 4)}`,
-                            );
-                        }
-                        wroteAudio = true;
-                        res.write(
-                            JSON.stringify({
-                                type: 'audio',
-                                data: delta.data,
-                                mimeType: delta.mime_type || 'audio/l16',
-                                sampleRate: delta.sample_rate || 24000,
-                                channels: delta.channels || 1,
-                            }) + '\n',
-                        );
+                res.write(
+                    JSON.stringify({
+                        type: 'audio',
+                        data: Buffer.from(bytes).toString('base64'),
+                        mimeType: 'audio/l16',
+                        sampleRate: OPENROUTER_TTS_SAMPLE_RATE,
+                        channels: 1,
+                    }) + '\n',
+                );
+            };
+
+            for (;;) {
+                if (clientGone) return;
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!value || value.length === 0) continue;
+                totalBytes += value.length;
+
+                // Slice the byte stream into fixed-size PCM chunks for relay.
+                if (pendingBytes.length === 0 && value.length >= TTS_RELAY_CHUNK_BYTES) {
+                    let offset = 0;
+                    while (value.length - offset >= TTS_RELAY_CHUNK_BYTES) {
+                        relay(value.slice(offset, offset + TTS_RELAY_CHUNK_BYTES));
+                        offset += TTS_RELAY_CHUNK_BYTES;
+                    }
+                    if (offset < value.length) pendingBytes = value.slice(offset);
+                } else {
+                    const combined = new Uint8Array(pendingBytes.length + value.length);
+                    combined.set(pendingBytes);
+                    combined.set(value, pendingBytes.length);
+                    pendingBytes = combined;
+                    while (pendingBytes.length >= TTS_RELAY_CHUNK_BYTES) {
+                        relay(pendingBytes.slice(0, TTS_RELAY_CHUNK_BYTES));
+                        pendingBytes = pendingBytes.slice(TTS_RELAY_CHUNK_BYTES);
                     }
                 }
             }
 
+            if (pendingBytes.length > 0) relay(pendingBytes);
+
             if (!wroteAudio) {
-                console.error('[tts] stream completed without any audio deltas (model may have returned text tokens)');
+                console.error('[tts] upstream returned an empty audio stream');
             }
             res.write(JSON.stringify({ type: 'done' }) + '\n');
             res.end();
             return;
         } catch (err) {
             lastError = err;
-            console.error('Gemini TTS error (attempt', attempt + 1, 'of', GEMINI_TTS_MAX_RETRIES + 1, '):', err.message);
-            if (wroteAudio || !isRetryableTtsError(err) || attempt >= GEMINI_TTS_MAX_RETRIES) break;
+            console.error('TTS upstream error (attempt', attempt + 1, 'of', OPENROUTER_TTS_MAX_RETRIES + 1, '):', err.message);
+            if (wroteAudio || !isRetryableTtsError(err) || attempt >= OPENROUTER_TTS_MAX_RETRIES) break;
             await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
         }
     }
 
     if (clientGone) return;
     if (!wroteAudio) {
-        return res.status(502).json({ error: `Gemini TTS error: ${lastError?.message || 'Unknown error'}` });
+        return res.status(502).json({ error: `TTS error: ${lastError?.message || 'Unknown error'}` });
     }
-    res.write(JSON.stringify({ type: 'error', message: `Gemini TTS error: ${lastError?.message || 'Unknown error'}` }) + '\n');
+    res.write(JSON.stringify({ type: 'error', message: `TTS error: ${lastError?.message || 'Unknown error'}` }) + '\n');
     res.end();
 });
 

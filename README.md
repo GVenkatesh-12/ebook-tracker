@@ -61,10 +61,11 @@ CLOUD_NAME=your_cloudinary_cloud_name
 CLOUD_API_KEY=your_cloudinary_api_key
 CLOUD_API_SECRET=your_cloudinary_api_secret
 CORS_ORIGIN=http://localhost:5173
-# TTS (Gemini) — GEMINI_API_KEY is required; model/voice are optional with these defaults
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_TTS_MODEL=gemini-3.1-flash-tts-preview
-GEMINI_TTS_VOICE=Gacrux
+# TTS (OpenRouter / Fish Audio) — OPENROUTER_API_KEY is required; model/voice are optional with these defaults
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_TTS_MODEL=fish-audio/s2.1-pro-free:free
+OPENROUTER_TTS_VOICE=alloy
+OPENROUTER_TTS_SAMPLE_RATE=24000
 ```
 
 The server validates required env vars on startup and exits if any are missing.
@@ -426,7 +427,7 @@ Success response (`200`):
 - **POST** `/tts/stream`
 - **Protected**
 
-Streams text to Gemini TTS (`gemini-3.1-flash-tts-preview` via the Interactions API with `stream: true`) and relays the audio chunks to the client as the model generates them. Responses are newline-delimited JSON (`application/x-ndjson`).
+Streams text to Fish Audio S2.1 Pro Free via OpenRouter (`POST /api/v1/audio/speech`, `response_format: pcm`) and relays the raw PCM byte stream to the client as it arrives. Responses are newline-delimited JSON (`application/x-ndjson`).
 
 Request body:
 
@@ -443,28 +444,29 @@ Validation:
 Streamed events (`200`):
 
 ```json
-{"type":"audio","data":"<base64 pcm/wav chunk>","mimeType":"audio/l16","sampleRate":24000,"channels":1}
+{"type":"audio","data":"<base64 pcm chunk>","mimeType":"audio/l16","sampleRate":24000,"channels":1}
 {"type":"done"}
 ```
 
 On a mid-stream upstream failure after audio has started, an error event is sent instead of `done`:
 
 ```json
-{"type":"error","message":"Gemini TTS error: ..."}
+{"type":"error","message":"TTS error: ..."}
 ```
 
 Errors:
 
-- missing `GEMINI_API_KEY` -> `503` `TTS is not configured...`
+- missing `OPENROUTER_API_KEY` -> `503` `TTS is not configured...`
 - text > 5000 chars -> `400`
-- upstream Gemini error before any audio -> `502`
-- transient upstream failures (429/5xx, random `INTERNAL` text-token returns) are retried automatically up to 2 times
+- upstream OpenRouter error before any audio -> `502`
+- transient upstream failures (429/5xx) are retried automatically up to 2 times
 
 Notes:
 
-- Inline audio tags in the text (e.g. `[calmly]`, `[whispers]`) are interpreted by the model.
-- The transcript is sent with a short "read this aloud" preamble to keep the model in speech-synthesis mode.
-- Audio is not persisted (`store: false`); requests are stateless.
+- `OPENROUTER_TTS_MODEL` defaults to `fish-audio/s2.1-pro-free:free` (free tier).
+- `OPENROUTER_TTS_VOICE` defaults to `alloy` (OpenAI-style voice names accepted by the adapter).
+- `OPENROUTER_TTS_SAMPLE_RATE` defaults to `24000`; set `44100` if the Fish adapter returns 44.1 kHz PCM (pitch check).
+- `OPENROUTER_API_URL` can override the endpoint for testing.
 
 ---
 
