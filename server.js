@@ -475,7 +475,11 @@ app.post('/tts/stream', auth, async (req, res) => {
     if (!text) {
         return res.status(400).json({ error: 'Text is required.' });
     }
-    if (text.length > OPENROUTER_TTS_MAX_CHARS) {
+    // PDF text layers contain a line break per visual line wrap. Collapse
+    // whitespace runs so the TTS model does not pause at every line end as if
+    // it were a sentence or paragraph boundary (periods are preserved).
+    const normalized = text.replace(/\s+/g, ' ');
+    if (normalized.length > OPENROUTER_TTS_MAX_CHARS) {
         return res.status(400).json({ error: `Text must be ${OPENROUTER_TTS_MAX_CHARS} characters or fewer.` });
     }
 
@@ -508,7 +512,7 @@ app.post('/tts/stream', auth, async (req, res) => {
                 },
                 body: JSON.stringify({
                     model: OPENROUTER_TTS_MODEL,
-                    input: text,
+                    input: normalized,
                     voice: OPENROUTER_TTS_VOICE,
                     response_format: 'pcm',
                 }),
