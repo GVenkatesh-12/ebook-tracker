@@ -65,7 +65,7 @@ CORS_ORIGIN=http://localhost:5173
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_TTS_MODEL=fish-audio/s2.1-pro-free:free
 OPENROUTER_TTS_VOICE=alloy
-OPENROUTER_TTS_SAMPLE_RATE=24000
+OPENROUTER_TTS_SAMPLE_RATE=44100
 ```
 
 The server validates required env vars on startup and exits if any are missing.
@@ -444,7 +444,7 @@ Validation:
 Streamed events (`200`):
 
 ```json
-{"type":"audio","data":"<base64 pcm chunk>","mimeType":"audio/l16","sampleRate":24000,"channels":1}
+{"type":"audio","data":"<base64 pcm chunk>","mimeType":"audio/l16","sampleRate":44100,"channels":1}
 {"type":"done"}
 ```
 
@@ -465,7 +465,7 @@ Notes:
 
 - `OPENROUTER_TTS_MODEL` defaults to `fish-audio/s2.1-pro-free:free` (free tier).
 - `OPENROUTER_TTS_VOICE` defaults to `alloy` (OpenAI-style voice names accepted by the adapter).
-- `OPENROUTER_TTS_SAMPLE_RATE` defaults to `24000`; set `44100` if the Fish adapter returns 44.1 kHz PCM (pitch check).
+- `OPENROUTER_TTS_SAMPLE_RATE` defaults to `44100` (the Fish adapter's native PCM rate; the 24000 default previously caused ~0.54x-speed alien-sounding playback).
 - `OPENROUTER_API_URL` can override the endpoint for testing.
 
 ---

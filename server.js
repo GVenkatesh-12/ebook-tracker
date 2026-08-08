@@ -452,7 +452,9 @@ app.delete('/books/:id', auth, async (req, res) => {
 const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_TTS_MODEL = process.env.OPENROUTER_TTS_MODEL || 'fish-audio/s2.1-pro-free:free';
 const OPENROUTER_TTS_VOICE = process.env.OPENROUTER_TTS_VOICE || 'alloy';
-const OPENROUTER_TTS_SAMPLE_RATE = Number(process.env.OPENROUTER_TTS_SAMPLE_RATE) || 24000;
+// Fish Audio's pcm output defaults to 44.1 kHz (per its API docs); labeling
+// it 24000 made the client play ~0.54x speed — a deep, alien-sounding voice.
+const OPENROUTER_TTS_SAMPLE_RATE = Number(process.env.OPENROUTER_TTS_SAMPLE_RATE) || 44100;
 const OPENROUTER_TTS_MAX_CHARS = 5000;
 const OPENROUTER_TTS_MAX_RETRIES = 2;
 const TTS_RELAY_CHUNK_BYTES = 48 * 1024;
